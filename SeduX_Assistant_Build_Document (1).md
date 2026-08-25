@@ -2,7 +2,7 @@
 ## Realtime Jarvis-Level AI Assistant with 3D Avatar, Emotion, Motion & Full Device Access
 
 **Version:** 1.0.0 | **Date:** August 2026 | **Model:** Sedux AI
-**Reference:** MYRA AI Assistant (github.com/codeninjavik/MYRA-AI-ASSISTANT-)
+
 
 ---
 
