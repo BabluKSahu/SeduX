@@ -87,6 +87,50 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(execution.definition.state, TaskState.RUNNING)
         self.assertIn("already running", execution.result.error or "")
 
+    def test_paused_tasks_can_resume_and_idempotent_keys_are_unique(self) -> None:
+        manager = TaskManager(executor=lambda task: "ok")
+        first = TaskDefinition(
+            "task-1",
+            "user-1",
+            "Reminder",
+            TaskType.REMINDER,
+            payload={"idempotency_key": "alpha"},
+        )
+        second = TaskDefinition(
+            "task-2",
+            "user-1",
+            "Reminder",
+            TaskType.REMINDER,
+            payload={"idempotency_key": "alpha"},
+        )
+        manager.create(first)
+        self.assertRaises(ValueError, manager.create, second)
+
+        paused = manager.pause("task-1")
+        self.assertEqual(paused.state, TaskState.PAUSED)
+        self.assertEqual(manager.resume("task-1").state, TaskState.QUEUED)
+        self.assertTrue(manager.retry("task-1").state == TaskState.QUEUED)
+
+    def test_scheduler_executes_due_tasks_and_skips_paused_ones(self) -> None:
+        manager = TaskManager(executor=lambda task: "done")
+        manager.create(TaskDefinition(
+            "task-1",
+            "user-1",
+            "Due reminder",
+            TaskType.REMINDER,
+            schedule=TaskSchedule(run_at="2026-11-01T18:00:00-04:00", timezone="America/New_York"),
+        ))
+        manager.create(TaskDefinition(
+            "task-2",
+            "user-1",
+            "Paused reminder",
+            TaskType.REMINDER,
+            state=TaskState.PAUSED,
+            schedule=TaskSchedule(run_at="2026-11-01T18:00:00-04:00", timezone="America/New_York"),
+        ))
+        due = manager.due(datetime(2026, 11, 1, 22, 0, tzinfo=UTC))
+        self.assertEqual([task.task_id for task in due], ["task-1"])
+
     def test_conflicts_are_detected_for_overlapping_user_tasks(self) -> None:
         manager = TaskManager()
         first = TaskDefinition(

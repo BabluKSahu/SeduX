@@ -5,7 +5,13 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from services.emotion.main import create_server
-from shared.emotion import EmotionLabel, analyze_text_emotion
+from shared.emotion import (
+    EmotionCapturePolicy,
+    EmotionLabel,
+    EmotionSignal,
+    analyze_text_emotion,
+    fuse_emotions,
+)
 
 
 class EmotionTests(unittest.TestCase):
@@ -77,6 +83,26 @@ class EmotionTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_multimodal_fusion_respects_consent_and_missing_signals(self) -> None:
+        policy = EmotionCapturePolicy(
+            user_id="user-42",
+            allowed_modalities=("face", "voice"),
+            consented=True,
+            retention_days=30,
+        )
+        fused = fuse_emotions(
+            [
+                EmotionSignal("face", EmotionLabel.HAPPY, 0.92, 0.8, consented=True),
+                EmotionSignal("voice", EmotionLabel.SAD, 0.10, 0.9, consented=True),
+                EmotionSignal("gaze", EmotionLabel.ANXIOUS, 0.0, 0.7, consented=True),
+            ],
+            policy=policy,
+        )
+
+        self.assertEqual(fused.dominant, EmotionLabel.HAPPY)
+        self.assertEqual(fused.modalities, ("face", "voice"))
+        self.assertFalse(policy.can_collect("screen"))
 
 
 if __name__ == "__main__":

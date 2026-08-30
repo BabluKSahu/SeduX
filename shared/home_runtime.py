@@ -7,7 +7,7 @@ from typing import Protocol
 from shared.home import DeviceState, DeviceType, HomeDevice
 
 
-SENSITIVE_DEVICE_TYPES = frozenset({DeviceType.LOCK})
+SENSITIVE_DEVICE_TYPES = frozenset({DeviceType.LOCK, DeviceType.ALARM})
 
 
 class HomeAdapter(Protocol):

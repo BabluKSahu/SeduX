@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Protocol
 
 from shared.memory import MemoryEntry, MemoryOperation, MemoryScope
@@ -48,9 +49,16 @@ class MemoryStore:
 
     def get(self, user_id: str, key: str) -> MemoryEntry:
         try:
-            return self._entries[(user_id, key)]
+            entry = self._entries[(user_id, key)]
         except KeyError as error:
             raise KeyError("memory not found") from error
+        if self._is_expired(entry):
+            self.delete(user_id, key)
+            raise KeyError("memory expired")
+        return entry
+
+    def recall(self, user_id: str, key: str) -> MemoryEntry:
+        return self.get(user_id, key)
 
     def correct(self, user_id: str, key: str, value: str) -> MemoryEntry:
         updated = replace(self.get(user_id, key), value=value, operation=MemoryOperation.UPDATE)
@@ -58,7 +66,33 @@ class MemoryStore:
         return updated
 
     def export(self, user_id: str) -> list[dict[str, object]]:
-        return [entry.to_dict() for (owner, _), entry in self._entries.items() if owner == user_id]
+        visible_entries: list[dict[str, object]] = []
+        for (owner, _), entry in self._entries.items():
+            if owner == user_id and not self._is_expired(entry):
+                visible_entries.append(entry.to_dict())
+        return visible_entries
 
     def delete(self, user_id: str, key: str) -> None:
         del self._entries[(user_id, key)]
+
+    def purge_expired(self, now: datetime) -> int:
+        expired_keys = [
+            identity
+            for identity, entry in self._entries.items()
+            if self._is_expired(entry, when=now)
+        ]
+        for identity in expired_keys:
+            del self._entries[identity]
+        return len(expired_keys)
+
+    @staticmethod
+    def _is_expired(entry: MemoryEntry, when: datetime | None = None) -> bool:
+        if entry.expires_at is None:
+            return False
+        if when is None:
+            when = datetime.now(timezone.utc)
+        try:
+            expires_at = datetime.fromisoformat(entry.expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return expires_at <= when

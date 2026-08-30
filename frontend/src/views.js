@@ -18,6 +18,42 @@ function createList(items, className = 'detail-list') {
   return list;
 }
 
+export function normalizeConsentKey(label) {
+  return String(label || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+export function getConsentRows(state = {}) {
+  const consent = state.consent || {};
+  const definitions = [
+    {
+      key: 'device_controls',
+      label: 'Device controls',
+      description: 'Allow SeduX to inspect and control connected devices.',
+      checked: Boolean(consent.devices),
+    },
+    {
+      key: 'voice_processing',
+      label: 'Voice processing',
+      description: 'Allow voice sessions to use the local pipeline.',
+      checked: Boolean(consent.voice),
+    },
+    {
+      key: 'screen_access',
+      label: 'Screen access',
+      description: 'Allow read-only screen capture and confirmation-based automation.',
+      checked: Boolean(consent.screen),
+    },
+  ];
+  return definitions.map((definition) => ({
+    ...definition,
+    key: definition.key || normalizeConsentKey(definition.label),
+  }));
+}
+
 export function renderOverview(state) {
   const fragment = document.createDocumentFragment();
   const stats = document.createElement('div');
@@ -99,7 +135,23 @@ export function renderScreen() {
 export function renderSettings(state, onConsentChange) {
   const content = document.createElement('div');
   content.className = 'settings-form';
-  content.innerHTML = `<label class="setting-row"><span><strong>Device controls</strong><small>Allow SeduX to inspect and control connected devices.</small></span><input type="checkbox" ${state.consent.devices ? 'checked' : ''} /></label><label class="setting-row"><span><strong>Voice processing</strong><small>Allow voice sessions to use the local pipeline.</small></span><input type="checkbox" ${state.consent.voice ? 'checked' : ''} /></label>`;
-  content.querySelectorAll('input').forEach((input) => input.addEventListener('change', () => onConsentChange(input.closest('.setting-row').querySelector('strong').textContent, input.checked)));
+  const rows = getConsentRows(state);
+
+  rows.forEach((row) => {
+    const label = document.createElement('label');
+    label.className = 'setting-row';
+    label.innerHTML = `
+      <span>
+        <strong>${row.label}</strong>
+        <small>${row.description}</small>
+      </span>
+      <input type="checkbox" data-consent-key="${row.key}" ${row.checked ? 'checked' : ''} />
+    `;
+    label.querySelector('input').addEventListener('change', () => {
+      onConsentChange?.(row.key, label.querySelector('input').checked);
+    });
+    content.appendChild(label);
+  });
+
   return createPanel('Settings', 'Consent and privacy', content);
 }

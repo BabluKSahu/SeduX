@@ -2,7 +2,7 @@ import unittest
 
 from shared.governance import AuditEvent, ConsentRecord, RetentionPolicy
 from shared.memory import MemoryEntry, MemoryOperation, MemoryScope
-from shared.security import AccessScope, SecurityPrinciple, redact_sensitive_text
+from shared.security import AccessScope, redact_sensitive_text
 
 
 class MemorySecurityGovernanceContractsTests(unittest.TestCase):
@@ -47,6 +47,49 @@ class MemorySecurityGovernanceContractsTests(unittest.TestCase):
         policy = RetentionPolicy(purpose="voice", ttl_days=30)
         self.assertEqual(policy.ttl_days, 30)
         self.assertEqual(policy.purpose, "voice")
+
+    def test_retention_policy_rejects_non_positive_ttl(self) -> None:
+        with self.assertRaises(ValueError):
+            RetentionPolicy(purpose="voice", ttl_days=0)
+        with self.assertRaises(ValueError):
+            RetentionPolicy(purpose="voice", ttl_days=-1)
+
+    def test_memory_store_enforces_user_isolation_and_expiration_cleanup(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from shared.memory_runtime import MemoryStore
+
+        store = MemoryStore()
+        created = store.create(MemoryEntry(
+            user_id="user-1",
+            scope=MemoryScope.USER,
+            operation=MemoryOperation.CREATE,
+            key="favorite_color",
+            value="blue",
+            summary="Prefers calmer colors.",
+        ))
+
+        self.assertEqual(created.value, "blue")
+        self.assertEqual(store.recall("user-1", "favorite_color").value, "blue")
+        self.assertEqual(store.export("user-2"), [])
+
+        updated = store.correct("user-1", "favorite_color", "green")
+        self.assertEqual(updated.value, "green")
+
+        expired = MemoryEntry(
+            user_id="user-1",
+            scope=MemoryScope.USER,
+            operation=MemoryOperation.CREATE,
+            key="old_fact",
+            value="stale",
+            expires_at=(datetime.now(UTC) - timedelta(days=1)).isoformat(),
+        )
+        store._entries[("user-1", "old_fact")] = expired
+        self.assertEqual(store.purge_expired(datetime.now(UTC)), 1)
+
+        store.delete("user-1", "favorite_color")
+        with self.assertRaises(KeyError):
+            store.get("user-1", "favorite_color")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,14 @@ from shared.tasks import TaskDefinition, TaskType
 
 
 class ActionRuntimeTests(unittest.TestCase):
+    def test_screen_rejects_blank_targets_and_keeps_safety_checks(self) -> None:
+        with self.assertRaises(ValueError):
+            ScreenAction(ScreenCapability.CLICK, "   ")
+
+        runtime = ScreenActionExecutor({ScreenCapability.CLICK, ScreenCapability.SUBMIT}, max_actions=5)
+        action = ScreenAction(ScreenCapability.CLICK, "login-button", confirmed=True, dry_run=False)
+        self.assertEqual(runtime.execute("user", action, {"login-button"}).outcome, "executed")
+
     def test_screen_requires_confirmation_and_honors_stop(self) -> None:
         runtime = ScreenActionExecutor({ScreenCapability.SUBMIT})
         action = ScreenAction(ScreenCapability.SUBMIT, "send-button")
@@ -44,6 +52,25 @@ class ActionRuntimeTests(unittest.TestCase):
         runtime.register(lock, datetime.now(UTC) - timedelta(minutes=2))
         with self.assertRaises(RuntimeError):
             runtime.command("two", "front", "locked", False, confirmed=True)
+
+    def test_home_requires_explicit_confirmation_for_alarm_and_tracks_stale_state(self) -> None:
+        adapter = RecordingHomeAdapter()
+        runtime = HomeRuntime(adapter)
+        alarm = HomeDevice("alarm-1", "Hall alarm", DeviceType.ALARM, "hall", capabilities=[DeviceCapability("armed")])
+        runtime.register(alarm)
+
+        with self.assertRaises(PermissionError):
+            runtime.command("alarm-command", "alarm-1", "armed", True)
+
+        self.assertEqual(
+            runtime.command("alarm-command", "alarm-1", "armed", True, confirmed=True).status,
+            "executed",
+        )
+        self.assertEqual(len(adapter.commands), 1)
+
+        runtime.register(alarm, datetime.now(UTC) - timedelta(minutes=2))
+        with self.assertRaises(RuntimeError):
+            runtime.command("alarm-command-2", "alarm-1", "armed", False, confirmed=True)
 
     def test_failed_task_enters_history_and_dead_letters(self) -> None:
         manager = TaskManager(executor=lambda task: (_ for _ in ()).throw(RuntimeError("failed")))

@@ -11,14 +11,16 @@ class AvatarState(StrEnum):
     THINKING = "thinking"
     SPEAKING = "speaking"
     ERROR = "error"
+    FALLBACK = "fallback"
 
 
 ALLOWED_TRANSITIONS: dict[AvatarState, frozenset[AvatarState]] = {
-    AvatarState.IDLE: frozenset({AvatarState.LISTENING, AvatarState.THINKING, AvatarState.SPEAKING, AvatarState.ERROR}),
-    AvatarState.LISTENING: frozenset({AvatarState.IDLE, AvatarState.THINKING, AvatarState.ERROR}),
-    AvatarState.THINKING: frozenset({AvatarState.IDLE, AvatarState.SPEAKING, AvatarState.ERROR}),
-    AvatarState.SPEAKING: frozenset({AvatarState.IDLE, AvatarState.LISTENING, AvatarState.ERROR}),
-    AvatarState.ERROR: frozenset({AvatarState.IDLE}),
+    AvatarState.IDLE: frozenset({AvatarState.LISTENING, AvatarState.THINKING, AvatarState.SPEAKING, AvatarState.ERROR, AvatarState.FALLBACK}),
+    AvatarState.LISTENING: frozenset({AvatarState.IDLE, AvatarState.THINKING, AvatarState.ERROR, AvatarState.FALLBACK}),
+    AvatarState.THINKING: frozenset({AvatarState.IDLE, AvatarState.SPEAKING, AvatarState.ERROR, AvatarState.FALLBACK}),
+    AvatarState.SPEAKING: frozenset({AvatarState.IDLE, AvatarState.LISTENING, AvatarState.ERROR, AvatarState.FALLBACK}),
+    AvatarState.ERROR: frozenset({AvatarState.IDLE, AvatarState.FALLBACK}),
+    AvatarState.FALLBACK: frozenset({AvatarState.IDLE, AvatarState.ERROR}),
 }
 
 VISEME_TO_BLEND_SHAPE = {
@@ -28,6 +30,14 @@ VISEME_TO_BLEND_SHAPE = {
     "oh": "mouthFunnel",
     "ou": "mouthPucker",
 }
+
+
+@dataclass(frozen=True)
+class AvatarScene:
+    scene_id: str
+    asset_uri: str
+    fallback_state: AvatarState = AvatarState.FALLBACK
+    default_state: AvatarState = AvatarState.IDLE
 
 
 @dataclass(frozen=True)
@@ -44,10 +54,22 @@ class AvatarFrame:
 
 class AvatarRuntime:
     def __init__(self, slow_frame_ms: float = 25.0) -> None:
-        self.state = AvatarState.IDLE
+        self.scene = AvatarScene(
+            scene_id="placeholder",
+            asset_uri="assets/avatar_placeholder.glb",
+            fallback_state=AvatarState.FALLBACK,
+            default_state=AvatarState.IDLE,
+        )
+        self.state = self.scene.default_state
         self.frames: list[AvatarFrame] = []
         self.frame_times: list[float] = []
         self.slow_frame_ms = slow_frame_ms
+
+    def set_scene(self, scene: AvatarScene) -> AvatarScene:
+        self.scene = scene
+        if self.state not in ALLOWED_TRANSITIONS.get(self.state, frozenset()):
+            self.state = scene.default_state
+        return scene
 
     def transition(self, state: AvatarState) -> AvatarState:
         if state is self.state:
@@ -74,6 +96,16 @@ class AvatarRuntime:
         if milliseconds < 0:
             raise ValueError("frame time cannot be negative")
         self.frame_times.append(milliseconds)
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "state": self.state.value,
+            "scene_id": self.scene.scene_id,
+            "asset_uri": self.scene.asset_uri,
+            "fallback": self.state == self.scene.fallback_state,
+            "low_performance": self.low_performance,
+            "frame_count": len(self.frames),
+        }
 
     @property
     def low_performance(self) -> bool:

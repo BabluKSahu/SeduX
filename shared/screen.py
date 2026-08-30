@@ -28,6 +28,12 @@ class ScreenAction:
     confirmed: bool = False
     dry_run: bool = True
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.capability, ScreenCapability):
+            raise ValueError("capability must be a ScreenCapability")
+        if not str(self.target or "").strip():
+            raise ValueError("target must be a non-empty screen selector")
+
 
 @dataclass(frozen=True)
 class ScreenAuditEvent:
@@ -71,11 +77,13 @@ class ScreenActionExecutor:
                 return self._record(actor, action, "blocked: rate limit")
             if action.capability not in self.capabilities:
                 return self._record(actor, action, "blocked: capability")
-            if action.target not in visible_targets:
+            if not str(action.target).strip() or action.target not in visible_targets:
                 return self._record(actor, action, "blocked: target not verified")
             if action.capability in SENSITIVE_CAPABILITIES and not action.confirmed:
                 return self._record(actor, action, "blocked: confirmation required")
-            return self._record(actor, action, "dry-run" if action.dry_run else "executed")
+            if action.dry_run:
+                return self._record(actor, action, "dry-run")
+            return self._record(actor, action, "executed")
 
     def _record(self, actor: str, action: ScreenAction, outcome: str) -> ScreenAuditEvent:
         event = ScreenAuditEvent(uuid4().hex, actor, action, outcome)

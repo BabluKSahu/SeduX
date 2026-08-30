@@ -7,7 +7,10 @@ from shared.operations import (
     MetricsRegistry,
     SlidingWindowRateLimiter,
     StructuredLogger,
+    build_backup_command,
+    build_restore_command,
     redis_readiness,
+    validate_deployment_environment,
 )
 from shared.security import AccessScope
 
@@ -63,6 +66,35 @@ class SecurityOperationsTests(unittest.TestCase):
         )
         self.assertTrue(ready.ready)
         self.assertIn("redis://localhost:6379/0", ready.detail)
+
+    def test_deployment_validation_and_backup_restore_helpers(self) -> None:
+        valid = validate_deployment_environment(
+            {
+                "SEDUX_ENV": "production",
+                "SEDUX_AUTH_SECRET": "a-very-long-and-strong-secret-value-12345",
+                "DATABASE_URL": "postgresql://sedux:sedux@postgres:5432/sedux",
+                "REDIS_URL": "redis://redis:6379/0",
+            }
+        )
+        self.assertTrue(valid)
+
+        invalid = validate_deployment_environment(
+            {
+                "SEDUX_ENV": "production",
+                "SEDUX_AUTH_SECRET": "short",
+            }
+        )
+        self.assertFalse(invalid)
+
+        backup = build_backup_command("sedux", "/tmp/sedux-backup.dump")
+        self.assertIn("pg_dump", backup)
+        self.assertIn("--format=custom", backup)
+        self.assertIn("sedux", backup)
+        self.assertIn("/tmp/sedux-backup.dump", backup)
+
+        restore = build_restore_command("/tmp/sedux-backup.dump", "sedux_restore")
+        self.assertIn("pg_restore", restore)
+        self.assertIn("sedux_restore", restore)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,55 @@ class BoundedAudioBuffer:
         return len(self._chunks)
 
 
+class VoiceSession:
+    def __init__(
+        self,
+        stt_adapter: STTAdapter | None = None,
+        tts_adapter: TTSAdapter | None = None,
+        max_buffer_ms: int = 1000,
+    ) -> None:
+        self.stt_adapter = stt_adapter or StubSTTAdapter()
+        self.tts_adapter = tts_adapter or StubTTSAdapter()
+        self.max_buffer_ms = max_buffer_ms
+        self.buffer = BoundedAudioBuffer(max_chunks=max(1, max_buffer_ms // 10))
+
+    def push_audio(self, chunk: bytes) -> None:
+        if self.buffer.cancelled:
+            raise RuntimeError("audio stream is cancelled")
+        self.buffer.push(chunk)
+
+    def cancel(self) -> None:
+        self.buffer.cancel()
+
+    def transcribe(self) -> TranscriptResult:
+        if self.buffer.cancelled:
+            raise RuntimeError("audio stream is cancelled")
+        return self.stt_adapter.transcribe(self.buffer.payload())
+
+    def synthesize(self, text: str) -> TTSChunk:
+        if not text:
+            raise ValueError("text is required")
+        return self.tts_adapter.synthesize(text)
+
+
+class VoicePipeline:
+    def __init__(self, stt_adapter: STTAdapter | None = None, tts_adapter: TTSAdapter | None = None) -> None:
+        self.stt_adapter = stt_adapter or StubSTTAdapter()
+        self.tts_adapter = tts_adapter or StubTTSAdapter()
+
+    @dataclass(frozen=True)
+    class Result:
+        transcript: TranscriptResult
+        audio: TTSChunk
+
+    def run(self, audio_chunk: bytes, text: str) -> Result:
+        session = VoiceSession(self.stt_adapter, self.tts_adapter)
+        session.push_audio(audio_chunk)
+        transcript = session.transcribe()
+        audio = session.synthesize(text)
+        return self.Result(transcript=transcript, audio=audio)
+
+
 def has_speech(chunk: bytes, threshold: int = 8) -> bool:
     return any(abs(byte - 128) >= threshold for byte in chunk)
 

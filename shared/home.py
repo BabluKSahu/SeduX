@@ -10,6 +10,7 @@ class DeviceType(str, Enum):
     SENSOR = "sensor"
     COVER = "cover"
     LOCK = "lock"
+    ALARM = "alarm"
     MEDIA = "media"
     SWITCH = "switch"
 

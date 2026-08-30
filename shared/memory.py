@@ -27,6 +27,13 @@ class MemoryEntry:
     value: str
     summary: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
+    expires_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.user_id or not self.key:
+            raise ValueError("user_id and key are required")
+        if self.expires_at is not None and not isinstance(self.expires_at, str):
+            raise TypeError("expires_at must be an ISO timestamp string or None")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -37,4 +44,5 @@ class MemoryEntry:
             "value": self.value,
             "summary": self.summary,
             "metadata": self.metadata,
+            "expires_at": self.expires_at,
         }

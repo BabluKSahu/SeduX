@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 import re
+from typing import Iterable
 
 
 class EmotionLabel(StrEnum):
@@ -17,6 +18,26 @@ POSITIVE_WORDS = frozenset({"happy", "great", "good", "love", "excited", "thanks
 SAD_WORDS = frozenset({"sad", "lonely", "hurt", "miss", "sorry", "upset", "tired", "down"})
 ANGRY_WORDS = frozenset({"angry", "mad", "hate", "frustrated", "furious", "annoyed"})
 ANXIOUS_WORDS = frozenset({"anxious", "worried", "worry", "afraid", "scared", "nervous", "panic"})
+
+
+@dataclass(frozen=True)
+class EmotionCapturePolicy:
+    user_id: str
+    allowed_modalities: tuple[str, ...] = ("text", "face", "voice", "gaze")
+    consented: bool = False
+    retention_days: int = 30
+
+    def __post_init__(self) -> None:
+        if not self.user_id or not str(self.user_id).strip():
+            raise ValueError("user_id must be non-empty")
+        if not isinstance(self.retention_days, int) or self.retention_days <= 0:
+            raise ValueError("retention_days must be a positive integer")
+        object.__setattr__(self, "allowed_modalities", tuple(self.allowed_modalities))
+        if not self.allowed_modalities:
+            raise ValueError("allowed_modalities cannot be empty")
+
+    def can_collect(self, modality: str) -> bool:
+        return bool(self.consented and modality in self.allowed_modalities)
 
 
 @dataclass(frozen=True)
@@ -35,15 +56,19 @@ class TextEmotionResult:
 
 
 @dataclass(frozen=True)
-class ModalityEmotionResult:
+class EmotionSignal:
     modality: str
     dominant: EmotionLabel
     confidence: float
     intensity: float
+    consented: bool = True
 
     def __post_init__(self) -> None:
         if not self.modality or not 0 <= self.confidence <= 1 or not 0 <= self.intensity <= 1:
             raise ValueError("modality is required and scores must be between zero and one")
+
+
+ModalityEmotionResult = EmotionSignal
 
 
 @dataclass(frozen=True)
@@ -54,8 +79,20 @@ class FusedEmotionResult:
     modalities: tuple[str, ...]
 
 
-def fuse_emotions(results: list[ModalityEmotionResult]) -> FusedEmotionResult:
-    usable = [result for result in results if result.confidence > 0]
+def fuse_emotions(
+    results: Iterable[EmotionSignal | ModalityEmotionResult],
+    policy: EmotionCapturePolicy | None = None,
+) -> FusedEmotionResult:
+    usable = []
+    for result in results:
+        if result.confidence <= 0:
+            continue
+        if policy is not None and not policy.can_collect(result.modality):
+            continue
+        if not getattr(result, "consented", True):
+            continue
+        usable.append(result)
+
     if not usable:
         return FusedEmotionResult(EmotionLabel.NEUTRAL, 0.0, 0.0, ())
 

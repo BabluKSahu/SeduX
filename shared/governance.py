@@ -47,6 +47,14 @@ class RetentionPolicy:
     ttl_days: int
     mode: str = "delete_after"
 
+    def __post_init__(self) -> None:
+        if not self.purpose or not str(self.purpose).strip():
+            raise ValueError("purpose must be non-empty")
+        if not isinstance(self.ttl_days, int) or self.ttl_days <= 0:
+            raise ValueError("ttl_days must be a positive integer")
+        if self.mode not in {"delete_after", "archive_after"}:
+            raise ValueError("mode must be 'delete_after' or 'archive_after'")
+
     def to_dict(self) -> dict[str, object]:
         return {
             "purpose": self.purpose,

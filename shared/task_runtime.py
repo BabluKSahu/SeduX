@@ -26,6 +26,7 @@ class TaskManager:
         self._executor = executor or self._default_executor
         self._history: dict[str, list[TaskExecution]] = {}
         self._dead_letters: list[TaskExecution] = []
+        self._idempotency_index: dict[str, str] = {}
 
     def create(self, task: TaskDefinition) -> TaskDefinition:
         with self._lock:
@@ -34,7 +35,14 @@ class TaskManager:
                 if existing == task:
                     return existing
                 raise ValueError(f"task {task.task_id!r} already exists")
+            idempotency_key = self._extract_idempotency_key(task)
+            if idempotency_key is not None:
+                existing_task_id = self._idempotency_index.get(idempotency_key)
+                if existing_task_id is not None and existing_task_id != task.task_id:
+                    raise ValueError(f"idempotency key {idempotency_key!r} already exists")
             self._tasks[task.task_id] = task
+            if idempotency_key is not None:
+                self._idempotency_index[idempotency_key] = task.task_id
             return task
 
     def list(self, user_id: str | None = None) -> list[TaskDefinition]:
@@ -56,6 +64,33 @@ class TaskManager:
             tasks = tuple(self._tasks.values())
         return [task for task in tasks if task.state is TaskState.QUEUED and task.schedule.is_due(now)]
 
+    def pause(self, task_id: str) -> TaskDefinition:
+        with self._lock:
+            task = self.get(task_id)
+            if task.state in {TaskState.CANCELLED, TaskState.SUCCEEDED}:
+                return task
+            updated = self._replace(task, state=TaskState.PAUSED)
+            self._tasks[task_id] = updated
+            return updated
+
+    def resume(self, task_id: str) -> TaskDefinition:
+        with self._lock:
+            task = self.get(task_id)
+            if task.state not in {TaskState.PAUSED, TaskState.QUEUED}:
+                return task
+            updated = self._replace(task, state=TaskState.QUEUED)
+            self._tasks[task_id] = updated
+            return updated
+
+    def retry(self, task_id: str) -> TaskDefinition:
+        with self._lock:
+            task = self.get(task_id)
+            if task.state in {TaskState.CANCELLED, TaskState.SUCCEEDED}:
+                return task
+            updated = self._replace(task, state=TaskState.QUEUED, retries=0)
+            self._tasks[task_id] = updated
+            return updated
+
     def cancel(self, task_id: str) -> TaskDefinition:
         with self._lock:
             task = self.get(task_id)
@@ -69,6 +104,8 @@ class TaskManager:
         with self._lock:
             task = self.get(task_id)
             history = self._history.get(task_id, ())
+            if task.state is TaskState.PAUSED:
+                return TaskExecution(task, TaskResult(task_id, False, error="task paused"))
             if task.state is TaskState.RUNNING:
                 return TaskExecution(task, TaskResult(task_id, False, error="task already running"))
             if task.state is TaskState.SUCCEEDED and history:
@@ -154,6 +191,28 @@ class TaskManager:
         return f"Task {task.name} completed"
 
     @staticmethod
+    def _extract_idempotency_key(task: TaskDefinition) -> str | None:
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        key = payload.get("idempotency_key")
+        if isinstance(key, str) and key:
+            return key
+        return None
+
+    @staticmethod
     def _replace(task: TaskDefinition, **changes: object) -> TaskDefinition:
         values = task.__dict__ | changes
         return TaskDefinition(**values)
+
+
+class TaskScheduler:
+    def __init__(self, manager: TaskManager | None = None) -> None:
+        self.manager = manager or TaskManager()
+
+    def poll(self, now: datetime) -> list[TaskDefinition]:
+        return self.manager.due(now)
+
+    def dispatch_due(self, now: datetime) -> list[TaskExecution]:
+        executions: list[TaskExecution] = []
+        for task in self.poll(now):
+            executions.append(self.manager.execute(task.task_id))
+        return executions

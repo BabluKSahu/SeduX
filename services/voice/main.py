@@ -1,5 +1,6 @@
 """Dependency-free voice service stub for local smoke tests."""
 
+import base64
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -7,6 +8,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from shared.contracts import health_payload
+from shared.voice import AudioPayload
+from shared.voice_runtime import StubSTTAdapter, StubTTSAdapter
 
 
 class VoiceHandler(BaseHTTPRequestHandler):
@@ -24,6 +27,44 @@ class VoiceHandler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path == "/health":
             self._write_json(health_payload("voice"))
             return
+        self._write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:
+        path = urlsplit(self.path).path
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length)) if length else {}
+            if not isinstance(payload, dict):
+                raise TypeError("request body must be a JSON object")
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            self._write_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/transcribe":
+            audio_b64 = payload.get("audio_b64")
+            if not isinstance(audio_b64, str):
+                self._write_json({"error": "audio_b64 is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            data = base64.b64decode(audio_b64)
+            audio = AudioPayload(
+                sample_rate=int(payload.get("sample_rate", 16000)),
+                channels=int(payload.get("channels", 1)),
+                format=str(payload.get("format", "pcm16")),
+                data=data,
+            )
+            result = StubSTTAdapter().transcribe(audio)
+            self._write_json(result.to_dict())
+            return
+
+        if path == "/synthesize":
+            text = payload.get("text")
+            if not isinstance(text, str) or not text.strip():
+                self._write_json({"error": "text is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            chunk = StubTTSAdapter().synthesize(text)
+            self._write_json(chunk.to_dict())
+            return
+
         self._write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: object) -> None:

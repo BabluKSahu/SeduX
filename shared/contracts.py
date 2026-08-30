@@ -59,10 +59,14 @@ def build_service_statuses(status: str = "planned") -> list[dict[str, Any]]:
     return entries
 
 
-def health_payload(service: str) -> dict[str, Any]:
-    return {
+def health_payload(service: str, *, ready: bool = True, detail: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "service": service,
         "status": "ok",
+        "ready": ready,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.0",
     }
+    if detail is not None:
+        payload["detail"] = detail
+    return payload

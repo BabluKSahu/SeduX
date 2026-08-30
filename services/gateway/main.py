@@ -22,8 +22,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
-        if path == "/health":
-            self._write_json(health_payload("gateway"))
+        if path in {"/health", "/health/live"}:
+            self._write_json(health_payload("gateway", ready=True, detail="live" if path.endswith("/live") else None))
+            return
+        if path in {"/health/ready", "/readiness"}:
+            self._write_json({
+                "service": "gateway",
+                "status": "healthy",
+                "ready": True,
+                "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                "services": [
+                    ServiceStatus(name, "ok" if name == "gateway" else "planned").to_dict()
+                    for name in SERVICE_NAMES
+                ],
+            })
             return
         if path == "/services":
             services = [
@@ -33,6 +45,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._write_json({"services": services})
             return
         self._write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Request-ID")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, format: str, *args: object) -> None:
         return
